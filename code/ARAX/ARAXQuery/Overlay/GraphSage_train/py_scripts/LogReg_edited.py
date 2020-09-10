@@ -1,3 +1,15 @@
+import sys
+import os
+# import internal modules
+pathlist = os.path.realpath(__file__).split(os.path.sep)
+RTXindex = pathlist.index("RTX")
+sys.path.append(os.path.sep.join([*pathlist[:(RTXindex + 1)], 'code', 'reasoningtool', 'kg-construction']))
+sys.path.append(os.path.sep.join([*pathlist[:(RTXindex + 1)], 'code', 'reasoningtool', 'QuestionAnswering']))
+
+from QueryMyChem import QueryMyChem
+import ReasoningUtilities as RU
+
+import json
 import pandas as pd
 import numpy as np
 import scipy as sci
@@ -41,8 +53,49 @@ if not args.type.upper() in ['LR','RF']:
     print('Model selection not valid. Using random forest...')
     args.type = 'RF' 
 
+def find(key, dictionary):
+    if isinstance(dictionary, dict):
+        for k, v in dictionary.items():
+            if k == key:
+                yield v
+            elif isinstance(v, dict):
+                for result in find(key, v):
+                    yield result
+            elif isinstance(v, list):
+                for d in v:
+                    for result in find(key, d):
+                        yield result
+def get_drug_class(chembl_id):
+    try:
+        q = QueryMyChem()
+        res = q.get_chemical_substance_entity(chembl_id)
+        res_json = json.loads(res)
+        for value in find("pharmacology_class", res_json):
+            if "fda_epc" in value:
+                if "code" in value["fda_epc"]:
+                    return value["fda_epc"]["code"]
+    except:
+        return chembl_id
+    return chembl_id
 
-
+def find_eg():
+    random_drugs = RU.get_random_nodes("chemical_substance", property="id", num=500, debug=False)
+    val = {}
+    c = 0
+    for drug in random_drugs:
+        chembl = drug.split(':')[1]
+        try:
+            res = get_drug_class(chembl)
+            if res is not None:
+                if res in val:
+                    val[res] += 1
+                else:
+                    val[res] = 1
+            else:
+                c += 1
+        except:
+            c += 1
+    return val, c
 class LogReg():
     """
     This class takes the output of node2vec and trains a logistic regression model using true positive and true negative data
@@ -95,8 +148,8 @@ class LogReg():
 
         c = 0
 
-        id_list = []
-        id_list_dict = dict()
+        id_list_class_dict = dict()
+        class_list = []
 
         # Generate true negative training set by concatinating source-target pair vectors
         for TN in TN_list:
@@ -113,15 +166,8 @@ class LogReg():
                     c += 1
                     continue
 
-                if (source_curie, target_curie) not in id_list_dict:
-                    id_list += [[source_curie, target_curie]]
-                    id_list_dict[source_curie, target_curie] = 0
-                    if self.pair_emb  == 'concatenate':
-                        X2 += [list(self.node_vec.iloc[source_id,1:]) + list(self.node_vec.iloc[target_id,1:])]
-                    elif self.pair_emb  == 'hadamard':
-                        X2 += [[a*b for a,b in zip(list(self.node_vec.iloc[source_id,1:]),list(self.node_vec.iloc[target_id,1:]))]]
-                    else:
-                        sys.exit("The parameter 'pair_emb' should only be 'concatenate' or 'hadamard'.")
+                if (source_curie, target_curie) not in id_list_class_dict:
+                    id_list_class_dict[source_curie, target_curie] = (0, get_drug_class(source_curie.split(':')[1]))
 
         # Generate true positive training set by concatinating source-target pair vectors
         for TP in TP_list:
@@ -138,16 +184,31 @@ class LogReg():
                     c += 1
                     continue
 
-                if (source_curie, target_curie) not in id_list_dict:
-                    id_list += [[source_curie, target_curie]]
-                    id_list_dict[source_curie, target_curie] = 1
-                    if self.pair_emb  == 'concatenate':
-                        X1 += [list(self.node_vec.iloc[source_id,1:]) + list(self.node_vec.iloc[target_id,1:])]
-                    elif self.pair_emb == 'hadamard':
-                        X1 += [[a*b for a,b in zip(list(self.node_vec.iloc[source_id,1:]),list(self.node_vec.iloc[target_id,1:]))]]
-                    else:
-                        sys.exit("The parameter 'pair_emb' should only be 'concatenate' or 'hadamard'.")
-        
+                if (source_curie, target_curie) not in id_list_class_dict:
+                    id_list_class_dict[source_curie, target_curie] = (1, get_drug_class(source_curie.split(':')[1]))
+                else:
+                    if id_list_class_dict[source_curie, target_curie][0] == 0:
+                        del id_list_class_dict[source_curie, target_curie]
+
+        for (source_curie, target_curie) in id_list_class_dict:
+            class_list.append(id_list_class_dict[source_curie, target_curie][1])
+            source_id = map_dict[source_curie]
+            target_id = map_dict[target_curie]
+            if id_list_class_dict[source_curie, target_curie][0] == 0:
+                if self.pair_emb == 'concatenate':
+                    X2 += [list(self.node_vec.iloc[source_id, 1:]) + list(self.node_vec.iloc[target_id, 1:])]
+                elif self.pair_emb == 'hadamard':
+                    X2 += [[a*b for a,b in zip(list(self.node_vec.iloc[source_id, 1:]), list(self.node_vec.iloc[target_id, 1:]))]]
+                else:
+                    sys.exit("The parameter 'pair_emb' should only be 'concatenate' or 'hadamard'.")
+            else:
+                if self.pair_emb == 'concatenate':
+                    X1 += [list(self.node_vec.iloc[source_id, 1:]) + list(self.node_vec.iloc[target_id, 1:])]
+                elif self.pair_emb == 'hadamard':
+                    X1 += [[a*b for a,b in zip(list(self.node_vec.iloc[source_id, 1:]), list(self.node_vec.iloc[target_id, 1:]))]]
+                else:
+                    sys.exit("The parameter 'pair_emb' should only be 'concatenate' or 'hadamard'.")
+
         # Assign 0 to negatives and 1 to positives
         y1 = [1]*len(X1)
         y2 = [0]*len(X2)
@@ -166,7 +227,8 @@ class LogReg():
         # Assign to class attribute
         self.X = X
         self.y = y
-        self.id_list = id_list
+        self.id_list_class_dict = id_list_class_dict
+        self.class_list = np.array(class_list)
 		
         print(f'Number of true positive pairs: {len(X1)}\n')
         print(f'Number of true negative pairs: {len(X2)}\n')
@@ -178,7 +240,6 @@ class LogReg():
         del y
         del y1
         del y2
-        del id_list
 
     def plot_cutoff(self, dfs, title_post = ["Random Pairings", "True Negatives", "True Positives"], print_flag=True):
         """
@@ -234,6 +295,8 @@ class LogReg():
         drugs = list(drug_df["id"])
         diseases = list(disease_df["id"])
 
+        drugs_name = list(drug_df["name"])
+        dis_name = list(disease_df["name"])
         # generate random seed from time
         #random.seed(1123581113)
         random.seed(int(time.time()/100))
@@ -256,12 +319,14 @@ class LogReg():
             source_curie = drugs[idx[0]]
             target_curie = diseases[idx[1]]
             
+            source_name = drugs_name[idx[0]]
+            target_name = dis_name[idx[1]]
             # get uids
             source_id = self.map_df.loc[self.map_df['curie'] == source_curie, 'id']
             target_id = self.map_df.loc[self.map_df['curie'] == target_curie, 'id']
             
             # if id was found
-            if len(source_id) >0 and len(target_id)>0:
+            if len(source_id) >0 and len(target_id)>0 and (source_curie, target_curie) not in self.id_list_class_dict:
                 # store id and count up for successful mapping
                 source_id = source_id.iloc[0]
                 target_id = target_id.iloc[0]
@@ -275,14 +340,16 @@ class LogReg():
                 else:
                     sys.exit("The parameter 'pair_emb' should only be 'concatenate' or 'hadamard'.")
 
-                data_list += [[source_curie,target_curie]]
+                data_list += [[source_name,target_name,source_id,target_id,source_curie,target_curie]]
+                #data_list += [[source_curie,target_curie]]
             # if found n successful mappings break loop
             if c == n:
                 break
 
         # convert lists to array/dataframe for use later
         self.X2 = np.array(X_list)
-        self.data = pd.DataFrame(data_list, columns=['source','target'])
+        # self.data = pd.DataFrame(data_list, columns=['source','target'])
+        self.data = pd.DataFrame(data_list, columns=['source name','target name', 'source id', 'target id', 'source curie', 'target curie'])
         print(f'Number of random pairs: {len(X_list)}\n')
 
     def max_lr_f1(self, C_flag = False, save = ""):
@@ -404,7 +471,7 @@ class LogReg():
         plt.savefig(outloc)
         #plt.show()
 
-    def classify_rf(self, max_depth=64, n_estimators=1000, max_features="sqrt", roc_flag = False, rand_flag = False, save = ""):
+    def classify_rf(self, max_depth=64, n_estimators=1000, max_features="sqrt", roc_flag = False, rand_flag = False, save = "", compare_flag = True, group_classes = True):
         """
         This uses LogisticRegressionCV to find the maximum mean f1 score using by adjusting the C parameter
 
@@ -414,7 +481,9 @@ class LogReg():
         # seeds random state from time
         random_state = np.random.RandomState(int(time.time()))
         np.random.seed(int(time.time()/100))
-
+        if group_classes:
+            rng_idx = np.arange(len(self.class_list))
+            np.random.shuffle(rng_idx)
         # Uncomment if you want to seed random state from iteger instead (to be able to repeat exact results)
         #random_state = np.random.RandomState(11235813)
         #np.random.seed(112358)
@@ -430,13 +499,15 @@ class LogReg():
 
         if rand_flag:
             # Generate random drug-disease pairs
-            rand_n=10000
+            rand_n=100000
             self.rand_rate(rand_n, self.drugs_path, self.diseases_path)
 
             # Get random pairs cutoff rates
             probas_rand = fitModel.predict_proba(self.X2)
 
             self.data["treat_prob"] = [pr[1] for pr in probas_rand]
+            rand_df_sort = self.data.sort_values("treat_prob", ascending = False).reset_index(drop=True)
+            rand_df_sort.to_csv(self.output + "random_pairs_names.csv",index=False)
             #print(self.data.sort_values("treat_prob", ascending = False).reset_index(drop=True))
             
 
@@ -459,6 +530,8 @@ class LogReg():
 
             # Sets up 10-fold cross validation set
             cv = ms.StratifiedKFold(n_splits=10, random_state=random_state, shuffle=True)
+            if group_classes:
+                cv = ms.GroupKFold(n_splits=10)
             tprs = []
             aucs = []
             f1s = []
@@ -476,8 +549,12 @@ class LogReg():
 
             prob_list = []
 
+            if group_classes:
+                cv_params = {"X" : self.X[rng_idx], "y" : self.y[rng_idx], "groups" : list(self.class_list[rng_idx])}
+            else:
+                cv_params = {"X" : self.X, "y" : self.y}
             # Calculates and plots the roc cureve for each set in 10-fold cross validation
-            for train, test in cv.split(self.X, self.y):
+            for train, test in cv.split(**cv_params):
                 model_i = model.fit(self.X[train], self.y[train])
                 probas_ = model_i.predict_proba(self.X[test])
                 pred = model_i.predict(self.X[test])
