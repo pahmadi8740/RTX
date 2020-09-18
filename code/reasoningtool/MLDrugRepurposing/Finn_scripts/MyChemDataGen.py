@@ -1,10 +1,9 @@
 import sys
 import os
-new_path = os.path.join(os.getcwd(), '/home/finn/Documents/rtx_clone/RTX/code/reasoningtool', 'kg-construction')
-sys.path.insert(0, new_path)
-
-new_path2 = os.path.join(os.getcwd(), '/home/finn/Documents/rtx_clone/RTX/code/reasoningtool', 'SemMedDB')
-sys.path.insert(0, new_path2)
+pathlist = os.path.realpath(__file__).split(os.path.sep)
+RTXindex = pathlist.index("RTX")
+sys.path.append(os.path.sep.join([*pathlist[:(RTXindex + 1)], 'code', 'reasoningtool','kg-construction']))
+sys.path.append(os.path.sep.join([*pathlist[:(RTXindex + 1)], 'code', 'reasoningtool','SemMedDB']))
 
 from SynonymMapper import SynonymMapper
 from QueryMyChem import QueryMyChem
@@ -20,7 +19,7 @@ import ast
 
 requests_cache.install_cache('MyChemCache')
 
-df = pandas.read_csv('data/drugs.csv')
+df = pandas.read_csv('drugs.csv')
 df = df.loc[df["id"].str.upper().str.startswith('CHEMBL', na=False)].reset_index(drop=True)
 
 def map_drug_to_ontology(chembl_id):
