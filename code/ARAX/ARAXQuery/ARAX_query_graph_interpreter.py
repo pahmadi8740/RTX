@@ -116,6 +116,10 @@ class ARAXQueryGraphInterpreter:
                     possible_next_steps.append( { 'content': 'predicates', 'score': 10 } )
                     possible_next_steps.append( { 'content': '', 'score': 0 } )
 
+                elif component['inferred_mode']:
+                    possible_next_steps.append( { 'content': f"mode=inferred", 'score': 100 } )
+                    possible_next_steps.append( { 'content': '', 'score': 0 } )
+
                 elif component['has_predicates']:
                     possible_next_steps.append( { 'content': 'predicates', 'score': 10 } )
                     possible_next_steps.append( { 'content': '', 'score': 0 } )
@@ -156,7 +160,6 @@ class ARAXQueryGraphInterpreter:
                 if tree_pointer['score'] > best_score:
                     query_graph_template_name = tree_pointer['pointer']['name']
                     best_score = tree_pointer['score']
-
 
         # If the final best template name is a real one in templates, then get the ARAXI for it
         if query_graph_template_name in self.query_graph_templates['templates']:

@@ -154,8 +154,11 @@ class QueryGraphInfo:
 
             if predicate is not None and predicate in virtual_edge_predicates:
                 continue
-
-            edge_info[key] = { 'key': key, 'has_predicates': False, 'subject': qedge.subject, 'object': qedge.object, 'predicates': None, 'exclude': False }
+            if getattr(qedge,"knowledge_type", "") == 'inferred':
+                inferred_mode = True
+            else:
+                inferred_mode = False
+            edge_info[key] = { 'key': key, 'has_predicates': False, 'inferred_mode':inferred_mode, 'subject': qedge.subject, 'object': qedge.object, 'predicates': None, 'exclude': False }
 
             if qedge.exclude is not None:
                 edge_info[key]['exclude'] = qedge.exclude
@@ -376,13 +379,14 @@ class QueryGraphInfo:
                     for related_edge in node['edges']:
                         if related_edge['subject'] == node['key']:
                             has_predicates = related_edge['has_predicates']
+                            inferred_mode = related_edge['inferred_mode']
                             if has_predicates is True and 'predicates' in related_edge:
                                 predicates_value = related_edge['predicates']
 
                 component_id = f"e{edge_index:02}"
                 template_part = f"-{component_id}()-"
                 self.query_graph_templates['simple'] += template_part
-                component = { 'component_type': 'edge', 'component_id': component_id, 'has_ids': False, 'has_predicates': has_predicates, 'predicates_value': predicates_value }
+                component = { 'component_type': 'edge', 'component_id': component_id, 'has_ids': False, 'has_predicates': has_predicates, 'predicates_value': predicates_value,'inferred_mode': inferred_mode }
                 self.query_graph_templates['detailed']['components'].append(component)
                 edge_index += 1
 
