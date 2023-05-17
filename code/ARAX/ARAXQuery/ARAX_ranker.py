@@ -13,12 +13,13 @@ from typing import Set, Union, Dict, List, Callable
 from ARAX_response import ARAXResponse
 from query_graph_info import QueryGraphInfo
 
+
 sys.path.append(os.path.dirname(os.path.abspath(__file__))+"/../../UI/OpenAPI/python-flask-server/")
 from openapi_server.models.query_graph import QueryGraph
 from openapi_server.models.result import Result
 from openapi_server.models.edge import Edge
 from openapi_server.models.attribute import Attribute
-
+from openapi_server.models.edge_binding import EdgeBinding
 
 def _get_nx_edges_by_attr(G: Union[nx.MultiDiGraph, nx.MultiGraph], key: str, val: str) -> Set[tuple]:
     res_set = set()
@@ -527,6 +528,133 @@ and [frobenius norm](https://en.wikipedia.org/wiki/Matrix_norm#Frobenius_norm).
         response.debug(f"Starting to rank results")
         message = response.envelope.message
         self.message = message
+        #gmean,hmean,median,Linf,mean
+        avg_type = "median"
+
+        # Combine SemMedDB edges into one and filter out the old ones
+        result_num = 0
+        for result in self.message.results:
+            #Count the number of results to keep combined edge ids unique
+            result_num += 1
+            semmed_db_edges = {}
+            ebindings_to_remove = {}
+            #For each result loop through the qedge keys and edge bindings
+            for eb_key, ebindings in result.edge_bindings.items():
+                semmed_db_edges[eb_key] = {}
+                ebindings_to_remove[eb_key] = set()
+                #Loop through all edge bindings for this specific qedge_key
+                for ebinding in ebindings:
+                    #Get the corresponding knowledge_graph edge
+                    kg_edge = self.message.knowledge_graph.edges[ebinding.id]
+                    semmed_flag = False
+                    pub_flag = False
+                    if kg_edge.attributes is not None:
+                        for attribute in kg_edge.attributes:
+                            #Check that it has publications
+                            if attribute.attribute_type_id == 'biolink:publications':
+                                pub_flag = True
+                            #Check that it is a semmeddb edge
+                            if attribute.value == 'infores:semmeddb':
+                                semmed_flag = True
+                            #If it is a semmeddb edge with publications then save the edge for combining later
+                            if semmed_flag and pub_flag:
+                                if (kg_edge.subject,kg_edge.object) not in semmed_db_edges[eb_key]:
+                                    semmed_db_edges[eb_key][(kg_edge.subject,kg_edge.object)] = {}
+                                semmed_db_edges[eb_key][(kg_edge.subject,kg_edge.object)][ebinding.id] = kg_edge
+                                ebindings_to_remove[eb_key].add(ebinding.id)
+                                break
+                # import pdb;pdb.set_trace()
+                #Need to loop through unique subject, object pairs for each qedge_key incease is_set=True and there are multiple kgnodes per qnode
+                for subject_key, object_key in semmed_db_edges[eb_key].keys():
+                    num_semmed_edges = len(semmed_db_edges[eb_key][(subject_key,object_key)])
+                    if num_semmed_edges > 1:
+                        #Set the edge binding to be unique for the qedge_key, subject_id, object_id, and result
+                        #Also added the number of edges that were combined
+                        # ebindings_to_remove[eb_key].union(list(semmed_db_edges[eb_key][(subject_key,object_key)].keys()))
+                        new_binding_id = f"COMBINED_{num_semmed_edges}_{eb_key}_semmedb_edges_{subject_key}_{object_key}_{result_num}"
+                        # import pdb;pdb.set_trace()
+                        combined_edge_attributes = []
+                        combined_publications = set()
+                        individual_publications = []
+                        combined_sentences = {}
+                        #Loop through the edges and make the new combined attribute list
+                        for ebinding_id, semmed_db_edge in semmed_db_edges[eb_key][(subject_key, object_key)].items():
+                            for attribute in semmed_db_edge.attributes:
+                                if attribute.attribute_type_id == 'biolink:publications':
+                                    if type(attribute.value) == list:
+                                        combined_publications = combined_publications.union(set(attribute.value))
+                                        individual_publications.append(set(attribute.value))
+                                elif attribute.attribute_type_id == 'bts:sentence':
+                                    if type(attribute.value) == dict:
+                                        for sentence_key, sentence in attribute.value.items():
+                                            combined_sentences[sentence_key] = sentence
+                                elif attribute not in combined_edge_attributes:
+                                    combined_edge_attributes.append(attribute)
+                        #FW: might decide to change how this works depending how this affects results
+                        #loop through the combined publications and removes ones with a object or subject confedece scores of less than 700
+                        pubs_to_remove = set()
+                        # import pdb;pdb.set_trace()
+                        for publication_id, publication_metadata in combined_sentences.items():
+                            if 'object score' in publication_metadata and publication_metadata['object score'] < 700:
+                                if publication_id in combined_publications:
+                                    combined_publications.remove(publication_id)
+                                    for idx in range(len(individual_publications)):
+                                        # import pdb;pdb.set_trace()
+                                        if publication_id in individual_publications[idx]:
+                                            individual_publications[idx].remove(publication_id)
+                                    pubs_to_remove.add(publication_id)
+                            elif 'subject score' in publication_metadata and publication_metadata['subject score'] < 700:
+                                if publication_id in combined_publications:
+                                    combined_publications.remove(publication_id)
+                                    for idx in range(len(individual_publications)):
+                                        if publication_id in individual_publications[idx]:
+                                            individual_publications[idx].remove(publication_id)
+                                    pubs_to_remove.add(publication_id)
+                        #Remove the filtered publications from the sentences
+                        for publication_id in pubs_to_remove:
+                            del combined_sentences[publication_id]
+                        #Get individual lengths of publications
+                        publication_counts = [len(x) for x in individual_publications]
+                        combined_publications = list(combined_publications)
+                        #Combine the publication list
+                        if avg_type == "all":
+                            pass
+                        elif avg_type == "mean":
+                            idx = math.ceil(np.mean(publication_counts))
+                            combined_publications = combined_publications[:idx]
+                        elif avg_type == "median":
+                            idx = math.ceil(np.median(publication_counts))
+                            combined_publications = combined_publications[:idx]
+                        elif avg_type == "hmean":
+                            idx = math.ceil(scipy.stats.mstats.hmean(publication_counts))
+                            combined_publications = combined_publications[:idx]
+                        elif avg_type == "gmean":
+                            idx = math.ceil(scipy.stats.mstats.gmean(publication_counts))
+                            combined_publications = combined_publications[:idx]
+                        elif avg_type == "Linf":
+                            idx = math.ceil(np.linalg.norm(publication_counts,ord=np.inf))
+                            combined_publications = combined_publications[:idx]
+
+                        combined_publication_attribute = Attribute(value=list(combined_publications),attribute_type_id='biolink:publications',value_type_id='biolink:Uriorcurie')
+                        combined_edge_attributes.append(combined_publication_attribute)
+                        #Combine the sentences
+                        combined_sentence_attribute = Attribute(value=combined_sentences,attribute_type_id='bts:sentence')
+                        combined_edge_attributes.append(combined_sentence_attribute)
+                        #FW: might be better to change related_to to one of the edge predicates found
+                        #Make the new combined edge
+                        combined_edge =  Edge(predicate="biolink:related_to", subject=subject_key, object=object_key,
+                                    attributes=combined_edge_attributes)
+                        #Add qedge_key for internal use
+                        combined_edge.qedge_keys = [eb_key]
+                        #Add it to the knowledge graph
+                        self.message.knowledge_graph.edges[new_binding_id] = combined_edge
+                        #Add the binding to the result
+                        new_binding = EdgeBinding(id = new_binding_id)
+                        # import pdb;pdb.set_trace()
+                        result.edge_bindings[eb_key].append(new_binding)
+            # Remove old bindings for this result
+            for eb_key, ebindings in result.edge_bindings.items():
+                result.edge_bindings[eb_key] = [x for x in result.edge_bindings[eb_key] if x.id not in ebindings_to_remove[eb_key]]
 
         # #### Compute some basic information about the query_graph
         query_graph_info = QueryGraphInfo()

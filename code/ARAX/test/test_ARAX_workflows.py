@@ -940,6 +940,28 @@ def test_example_3_issue_679():
     assert response.status == 'OK'
     assert message.results[0].essence is not None
 
+def test_semmeddb_combine():
+    query = {"operations": {"actions": [
+        "create_message",
+        "add_qnode(ids=MONDO:0005709, key=n0)",
+        "add_qnode(categories=biolink:Drug, key=n1)",
+        "add_qedge(subject=n0, object=n1, key=e0)",
+        "expand(kp=infores:rtx-kg2)",
+        "resultify()",
+        "filter_results(action=limit_number_of_results, max_results=20)",
+        "return(message=true, store=false)"
+    ]}}
+    
+    [response, message] = _do_arax_query(query)
+    assert response.status == 'OK'
+    combined_result_bindings = 0
+    for result in message.results:
+        for eb_key, ebindings in result.edge_bindings.items():
+            for ebinding in ebindings:
+                if ebinding.id.startswith("COMBINED"):
+                    combined_result_bindings += 1
+                    assert ebinding.id in message.knowledge_graph.edges
+    assert combined_result_bindings > 0
 
 if __name__ == "__main__":
     pytest.main(['-v'])
