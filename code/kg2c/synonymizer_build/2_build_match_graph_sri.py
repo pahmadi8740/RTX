@@ -69,7 +69,7 @@ def get_sri_cluster_id_mappings(kg2pre_node_ids_set: Set[str]):
     for node_id_batch in kg2pre_node_id_batches:
         # Send the batch to the SRI NN RestAPI
         # Note: This is their development (non-ITRB) server, which seems to be faster for us..
-        sri_nn_url = "https://nodenormalization-sri.renci.org/1.3/get_normalized_nodes"
+        sri_nn_url = "https://nodenormalization-sri.renci.org/1.4/get_normalized_nodes"
         query_body = {"curies": node_id_batch,
                       "conflate": True}
         response = requests.post(sri_nn_url, json=query_body)
