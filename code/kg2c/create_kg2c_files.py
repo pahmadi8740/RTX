@@ -372,6 +372,8 @@ def create_kg2c_tsv_files(canonicalized_nodes_dict: Dict[str, Dict[str, any]],
     node_labels_property = _get_node_labels_property()
     for canonicalized_node in canonicalized_nodes_dict.values():
         canonicalized_node['node_labels'] = bh.get_ancestors(canonicalized_node[node_labels_property], include_mixins=False) #Setting include_mixins to False to reduce the number of labels
+        if len(canonicalized_node['node_labels']) > 20:
+            canonicalized_node['node_labels'] = canonicalized_node['node_labels'][:20] #Limiting the number of labels to 20 due to neo4j's 20 label limit
         for list_node_property in array_node_columns:
             canonicalized_node[list_node_property] = _convert_list_to_string_encoded_format(canonicalized_node[list_node_property])
     for canonicalized_edge in canonicalized_edges_dict.values():
